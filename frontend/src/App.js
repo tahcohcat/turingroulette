@@ -91,7 +91,12 @@ export default function TuringRoulette() {
             ...prev,
             [data.model]: data.content === 'true'
           }));
-        } else if (data.type === 'gameFinished') {
+        } else if (data.type === 'gameStart') {
+        console.log('Game started with selected models:', data.selectedModels);
+        if (data.selectedModels) {
+          setGameModels(data.selectedModels);
+        }
+      } else if (data.type === 'gameFinished') {
           console.log('Game finished received, setting finished state');
           if (data.modelStates) {
             setModelHistory(data.modelStates);
@@ -174,13 +179,13 @@ export default function TuringRoulette() {
       ws.current.send(JSON.stringify(submission));
       setGameState('playing');
 
-      // Initially show all models, will be updated when game starts
-      setGameModels(config.models);
-
+      // Models will be set by gameStart message
       const outputs = {};
-      config.models.forEach(model => {
-        outputs[model.name] = '';
-      });
+      if (config.models) {
+        config.models.forEach(model => {
+          outputs[model.name] = '';
+        });
+      }
       setModelOutputs(outputs);
       setModelResults({});
       setModelHistory({});
@@ -578,49 +583,93 @@ export default function TuringRoulette() {
           </div>
 
           {stats ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-gray-800 rounded-lg p-6">
-                <h3 className="text-white font-bold text-xl mb-4">Overall Stats</h3>
-                <div className="space-y-3">
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Total Games:</span>
-                    <span className="text-white font-bold">{stats.totalGames || 0}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Wins:</span>
-                    <span className="text-green-400 font-bold">{stats.wins || 0}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Losses:</span>
-                    <span className="text-red-400 font-bold">{stats.losses || 0}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Win Rate:</span>
-                    <span className="text-purple-400 font-bold">{(stats.winRate || 0).toFixed(1)}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Avg Duration:</span>
-                    <span className="text-white font-bold">{(stats.averageDuration || 0).toFixed(1)}s</span>
-                  </div>
+          <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-gray-800 rounded-lg p-6">
+            <h3 className="text-white font-bold text-xl mb-4">Overall Stats</h3>
+          <div className="space-y-3">
+          <div className="flex justify-between">
+            <span className="text-gray-400">Total Games:</span>
+              <span className="text-white font-bold">{stats.totalGames || 0}</span>
+            </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Wins:</span>
+              <span className="text-green-400 font-bold">{stats.wins || 0}</span>
+            </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Losses:</span>
+              <span className="text-red-400 font-bold">{stats.losses || 0}</span>
+            </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Win Rate:</span>
+              <span className="text-purple-400 font-bold">{(stats.winRate || 0).toFixed(1)}%</span>
+            </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Avg Duration:</span>
+              <span className="text-white font-bold">{(stats.averageDuration || 0).toFixed(1)}s</span>
+              </div>
+              </div>
                 </div>
+
+          <div className="bg-gray-800 rounded-lg p-6">
+            <h3 className="text-white font-bold text-xl mb-4">By Difficulty</h3>
+          <div className="space-y-3">
+          {stats.byDifficulty && Object.keys(stats.byDifficulty).length > 0 ? (
+          Object.entries(stats.byDifficulty).map(([diff, count]) => (
+          <div key={diff} className="flex justify-between items-center">
+            <span className="text-gray-400 capitalize">{diff}:</span>
+          <span className={`${getDifficultyColor(diff)} text-white px-3 py-1 rounded text-sm font-bold`}>
+              {count} games
+              </span>
+              </div>
+              ))
+          ) : (
+              <p className="text-gray-400 text-center py-4">No games played yet</p>
+              )}
+              </div>
+              </div>
               </div>
 
               <div className="bg-gray-800 rounded-lg p-6">
-                <h3 className="text-white font-bold text-xl mb-4">By Difficulty</h3>
-                <div className="space-y-3">
-                  {stats.byDifficulty && Object.keys(stats.byDifficulty).length > 0 ? (
-                    Object.entries(stats.byDifficulty).map(([diff, count]) => (
-                      <div key={diff} className="flex justify-between items-center">
-                        <span className="text-gray-400 capitalize">{diff}:</span>
-                        <span className={`${getDifficultyColor(diff)} text-white px-3 py-1 rounded text-sm font-bold`}>
-                          {count} games
-                        </span>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-gray-400 text-center py-4">No games played yet</p>
-                  )}
-                </div>
+                <h3 className="text-white font-bold text-xl mb-4">Model Performance</h3>
+                {stats.byModel && Object.keys(stats.byModel).length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-gray-700">
+                          <th className="text-left p-3 text-gray-400 font-semibold">Model</th>
+                          <th className="text-left p-3 text-gray-400 font-semibold">Provider</th>
+                          <th className="text-left p-3 text-gray-400 font-semibold">Games</th>
+                          <th className="text-left p-3 text-gray-400 font-semibold">Accuracy</th>
+                          <th className="text-left p-3 text-gray-400 font-semibold">Avg Time</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.values(stats.byModel)
+                          .sort((a, b) => b.gamesPlayed - a.gamesPlayed)
+                          .map((model) => (
+                          <tr key={model.name} className="border-b border-gray-800">
+                            <td className="p-3 text-white font-medium">{model.name}</td>
+                            <td className="p-3 text-gray-400 capitalize">{model.provider}</td>
+                            <td className="p-3 text-white">{model.gamesPlayed}</td>
+                            <td className="p-3">
+                              <span className={`px-2 py-1 rounded text-xs font-bold ${
+                                model.accuracy >= 80 ? 'bg-green-600 text-white' :
+                                model.accuracy >= 60 ? 'bg-yellow-600 text-white' :
+                                'bg-red-600 text-white'
+                              }`}>
+                                {model.accuracy?.toFixed(1)}%
+                              </span>
+                            </td>
+                            <td className="p-3 text-gray-300">{model.avgResponseTime?.toFixed(2)}s</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-gray-400 text-center py-4">No model statistics yet</p>
+                )}
               </div>
             </div>
           ) : (

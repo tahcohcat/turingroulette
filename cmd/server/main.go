@@ -80,13 +80,24 @@ type GameResult struct {
 }
 
 type Stats struct {
-	TotalGames      int            `json:"totalGames"`
-	Wins            int            `json:"wins"`
-	Losses          int            `json:"losses"`
-	WinRate         float64        `json:"winRate"`
-	ByDifficulty    map[string]int `json:"byDifficulty"`
-	AverageDuration float64        `json:"averageDuration"`
-	TotalDuration   float64        `json:"totalDuration"`
+	TotalGames      int                     `json:"totalGames"`
+	Wins            int                     `json:"wins"`
+	Losses          int                     `json:"losses"`
+	WinRate         float64                 `json:"winRate"`
+	ByDifficulty    map[string]int          `json:"byDifficulty"`
+	AverageDuration float64                 `json:"averageDuration"`
+	TotalDuration   float64                 `json:"totalDuration"`
+	ByModel         map[string]ModelStats   `json:"byModel"`
+}
+
+type ModelStats struct {
+	Name            string  `json:"name"`
+	Provider        string  `json:"provider"`
+	GamesPlayed     int     `json:"gamesPlayed"`
+	TimesCorrect    int     `json:"timesCorrect"`
+	Accuracy        float64 `json:"accuracy"`
+	AvgResponseTime float64 `json:"avgResponseTime"`
+	TotalResponseTime float64 `json:"totalResponseTime"`
 }
 
 type LeaderboardEntry struct {
@@ -313,11 +324,15 @@ func loadStats() {
 	if err != nil {
 		stats = Stats{
 			ByDifficulty: make(map[string]int),
+			ByModel:      make(map[string]ModelStats),
 		}
 		return
 	}
 
 	json.Unmarshal(file, &stats)
+	if stats.ByModel == nil {
+		stats.ByModel = make(map[string]ModelStats)
+	}
 }
 
 func saveStats() {
@@ -374,30 +389,69 @@ func calculateScore(result GameResult) int {
 
 func updateStats(result GameResult) {
 
-	log.Println("Updating stats with result:", result)	
+log.Println("Updating stats with result:", result)
+statsMux.Lock()
+defer statsMux.Unlock()
+
+stats.TotalGames++
+if result.PlayerWins {
+stats.Wins++
+} else {
+stats.Losses++
+}
+
+if stats.TotalGames > 0 {
+stats.WinRate = float64(stats.Wins) / float64(stats.TotalGames) * 100
+}
+
+if stats.ByDifficulty == nil {
+stats.ByDifficulty = make(map[string]int)
+}
+stats.ByDifficulty[result.Difficulty]++
+
+stats.TotalDuration += result.Duration
+stats.AverageDuration = stats.TotalDuration / float64(stats.TotalGames)
+
+log.Println("Saving stats")
+saveStats()
+}
+
+func updateModelStats(game *GameState) {
 	statsMux.Lock()
 	defer statsMux.Unlock()
 
-	stats.TotalGames++
-	if result.PlayerWins {
-		stats.Wins++
-	} else {
-		stats.Losses++
+	for _, modelCfg := range game.SelectedModels {
+		if state, exists := game.ModelStates[modelCfg.Name]; exists {
+			modelKey := modelCfg.Name
+
+			if stats.ByModel == nil {
+				stats.ByModel = make(map[string]ModelStats)
+			}
+
+			modelStat := stats.ByModel[modelKey]
+			if modelStat.Name == "" {
+				// Initialize new model stats
+				modelStat = ModelStats{
+					Name:     modelCfg.Name,
+					Provider: modelCfg.Provider,
+				}
+			}
+
+			modelStat.GamesPlayed++
+			if state.Correct {
+				modelStat.TimesCorrect++
+			}
+			modelStat.TotalResponseTime += state.ResponseTime
+
+			if modelStat.GamesPlayed > 0 {
+				modelStat.Accuracy = float64(modelStat.TimesCorrect) / float64(modelStat.GamesPlayed) * 100
+				modelStat.AvgResponseTime = modelStat.TotalResponseTime / float64(modelStat.GamesPlayed)
+			}
+
+			stats.ByModel[modelKey] = modelStat
+		}
 	}
 
-	if stats.TotalGames > 0 {
-		stats.WinRate = float64(stats.Wins) / float64(stats.TotalGames) * 100
-	}
-
-	if stats.ByDifficulty == nil {
-		stats.ByDifficulty = make(map[string]int)
-	}
-	stats.ByDifficulty[result.Difficulty]++
-
-	stats.TotalDuration += result.Duration
-	stats.AverageDuration = stats.TotalDuration / float64(stats.TotalGames)
-
-	log.Println("Saving stats")
 	saveStats()
 }
 
@@ -532,6 +586,13 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		games[conn] = game
 		gamesMux.Unlock()
 
+		// Send game start message with selected models
+		startMsg := map[string]interface{}{
+			"type":          "gameStart",
+			"selectedModels": selectedModels,
+		}
+		conn.WriteJSON(startMsg)
+
 		playRound(conn, game)
 	}
 
@@ -654,7 +715,8 @@ func playRound(conn *websocket.Conn, game *GameState) {
 		
 		log.Println("Updating stats and leaderboard")
 		updateStats(gameResult)
-		addToLeaderboard(game, gameResult)
+		updateModelStats(game)
+	addToLeaderboard(game, gameResult)
 
 		result["gameOver"] = true
 		log.Print("Stats and leaderboard updated")
