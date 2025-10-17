@@ -12,7 +12,8 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-COPY --from=frontend-build /app/frontend/build ./static
+COPY --from=frontend-build /app/frontend/build/index.html ./static/
+COPY --from=frontend-build /app/frontend/build/static/ ./static/
 RUN go build -o turingroulette ./cmd/server
 
 # Final image

@@ -37,7 +37,7 @@ export default function TuringRoulette() {
 
   const fetchConfig = async () => {
     try {
-      const response = await fetch('http://localhost:8080/config');
+      const response = await fetch('/config');
       const data = await response.json();
       setConfig(data);
       
@@ -55,7 +55,7 @@ export default function TuringRoulette() {
 
   const fetchStats = async () => {
     try {
-      const response = await fetch('http://localhost:8080/stats');
+      const response = await fetch('/stats');
       const data = await response.json();
       setStats(data);
     } catch (error) {
@@ -65,7 +65,7 @@ export default function TuringRoulette() {
 
   const fetchLeaderboard = async () => {
     try {
-      const response = await fetch('http://localhost:8080/leaderboard');
+      const response = await fetch('/leaderboard');
       const data = await response.json();
       setLeaderboard(data || []);
     } catch (error) {
@@ -74,7 +74,8 @@ export default function TuringRoulette() {
   };
 
   const connectWebSocket = () => {
-    ws.current = new WebSocket('ws://localhost:8080/ws');
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws.current = new WebSocket(`${protocol}//${window.location.host}/ws`);
     
     ws.current.onmessage = (event) => {
       try {
@@ -304,12 +305,19 @@ export default function TuringRoulette() {
                   Back to Game
                 </button>
                 <button
-                  onClick={() => navigateTo('stats')}
-                  className="w-full text-left px-4 py-2 text-white hover:bg-gray-700 transition flex items-center gap-2"
+                onClick={() => navigateTo('rules')}
+                className="w-full text-left px-4 py-2 text-white hover:bg-gray-700 transition flex items-center gap-2"
                 >
-                  <BarChart3 size={18} />
-                  Stats
+                <Settings size={18} />
+                Rules
                 </button>
+                 <button
+                   onClick={() => navigateTo('stats')}
+                   className="w-full text-left px-4 py-2 text-white hover:bg-gray-700 transition flex items-center gap-2"
+                 >
+                   <BarChart3 size={18} />
+                   Stats
+                 </button>
                 <button
                   onClick={() => navigateTo('leaderboard')}
                   className="w-full text-left px-4 py-2 text-white hover:bg-gray-700 transition flex items-center gap-2"
@@ -443,23 +451,30 @@ export default function TuringRoulette() {
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 p-8">
         <div className="max-w-3xl mx-auto">
           <div className="mb-6 flex justify-between items-center">
-            <div className="flex gap-2">
-              <button
-                onClick={() => navigateTo('stats')}
-                className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition flex items-center gap-2"
-              >
-                <BarChart3 size={18} />
-                Stats
-              </button>
-              <button
+          <div className="flex gap-2">
+          <button
+          onClick={() => navigateTo('rules')}
+          className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition flex items-center gap-2"
+          >
+          <Settings size={18} />
+          Rules
+          </button>
+          <button
+          onClick={() => navigateTo('stats')}
+          className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition flex items-center gap-2"
+          >
+          <BarChart3 size={18} />
+          Stats
+          </button>
+            <button
                 onClick={() => navigateTo('leaderboard')}
-                className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition flex items-center gap-2"
-              >
-                <Award size={18} />
-                Leaderboard
-              </button>
-            </div>
-          </div>
+                 className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition flex items-center gap-2"
+               >
+                 <Award size={18} />
+                 Leaderboard
+               </button>
+             </div>
+           </div>
 
           <div className="text-center mb-8">
             <h1 className="text-5xl font-bold text-white mb-4">Create Your Riddle</h1>
@@ -679,6 +694,105 @@ export default function TuringRoulette() {
               <p className="text-gray-400 text-lg">Loading statistics...</p>
             </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (gameState === 'rules') {
+  return (
+  <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900 p-8">
+  <div className="max-w-4xl mx-auto">
+  <div className="mb-6">
+  <button
+  onClick={navigateBack}
+  className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition flex items-center gap-2"
+  >
+  <ChevronLeft size={18} />
+  Back
+  </button>
+  </div>
+
+  <div className="text-center mb-8">
+  <h1 className="text-5xl font-bold text-white mb-2 flex items-center justify-center">
+  <Settings className="mr-3" size={48} />
+  How to Play Turing Roulette
+  </h1>
+  <p className="text-gray-400">Master the art of creating AI-stumping riddles</p>
+  </div>
+
+          <div className="space-y-6">
+            <div className="bg-gray-800 rounded-lg p-6">
+              <h2 className="text-2xl font-bold text-white mb-4">🎯 Objective</h2>
+              <p className="text-gray-300 leading-relaxed">
+                Create a riddle that will stump as many AI models as possible! The goal is to craft a puzzle that some AIs can solve, but not all of them. If all AIs get it right, you lose. If none get it right, you also lose. Victory comes from finding that sweet spot in between!
+              </p>
+            </div>
+
+            <div className="bg-gray-800 rounded-lg p-6">
+              <h2 className="text-2xl font-bold text-white mb-4">📝 Creating Your Riddle</h2>
+              <ul className="text-gray-300 space-y-2 leading-relaxed">
+                <li><strong>Choose a Difficulty:</strong> Easy (100 base points), Medium (150), or Hard (200)</li>
+                <li><strong>Write Your Riddle:</strong> Create an engaging, clever puzzle</li>
+                <li><strong>Provide the Answer:</strong> A clear, concise solution (1-2 words)</li>
+                <li><strong>Add Clues:</strong> Up to 3 progressive hints that will be revealed one per round</li>
+                <li><strong>Optional Name:</strong> Enter your name for leaderboard glory</li>
+              </ul>
+            </div>
+
+            <div className="bg-gray-800 rounded-lg p-6">
+              <h2 className="text-2xl font-bold text-white mb-4">🤖 How the AI Plays</h2>
+              <ul className="text-gray-300 space-y-2 leading-relaxed">
+                <li><strong>Round 1:</strong> AIs see only your riddle and must guess the answer</li>
+                <li><strong>Round 2:</strong> If they fail, the first clue is revealed, and they try again</li>
+                <li><strong>Round 3:</strong> Second clue revealed for remaining AIs</li>
+                <li><strong>Final Round:</strong> Third clue revealed, last chance to solve</li>
+                <li><strong>Each AI gets up to 3 guesses</strong> per round before moving on</li>
+              </ul>
+            </div>
+
+            <div className="bg-gray-800 rounded-lg p-6">
+              <h2 className="text-2xl font-bold text-white mb-4">🏆 Scoring System</h2>
+              <ul className="text-gray-300 space-y-2 leading-relaxed">
+                <li><strong>Base Points:</strong> 100 (Easy), 150 (Medium), 200 (Hard)</li>
+                <li><strong>Speed Bonus:</strong> Up to 50 points for solving under 60 seconds</li>
+                <li><strong>Stump Bonus:</strong> 20 points per AI that fails to solve your riddle</li>
+                <li><strong>Perfect Score:</strong> When some (but not all) AIs get it right</li>
+              </ul>
+            </div>
+
+            <div className="bg-gray-800 rounded-lg p-6">
+              <h2 className="text-2xl font-bold text-white mb-4">🎮 Winning Conditions</h2>
+              <div className="grid md:grid-cols-3 gap-4">
+                <div className="bg-green-900 border border-green-700 rounded-lg p-4 text-center">
+                  <div className="text-3xl mb-2">🎉</div>
+                  <h3 className="text-green-300 font-bold mb-2">YOU WIN</h3>
+                  <p className="text-green-200 text-sm">Some AIs solve it, others don't</p>
+                </div>
+                <div className="bg-red-900 border border-red-700 rounded-lg p-4 text-center">
+                  <div className="text-3xl mb-2">💥</div>
+                  <h3 className="text-red-300 font-bold mb-2">AI WINS</h3>
+                  <p className="text-red-200 text-sm">All AIs solve it</p>
+                </div>
+                <div className="bg-red-900 border border-red-700 rounded-lg p-4 text-center">
+                  <div className="text-3xl mb-2">🤖</div>
+                  <h3 className="text-red-300 font-bold mb-2">AI WINS</h3>
+                  <p className="text-red-200 text-sm">No AIs solve it after all clues</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gray-800 rounded-lg p-6">
+              <h2 className="text-2xl font-bold text-white mb-4">💡 Tips for Success</h2>
+              <ul className="text-gray-300 space-y-2 leading-relaxed">
+                <li><strong>Wordplay:</strong> Use puns, homophones, and clever double meanings</li>
+                <li><strong>Cultural References:</strong> Include pop culture, history, or niche knowledge</li>
+                <li><strong>Progressive Difficulty:</strong> Make clues build upon each other logically</li>
+                <li><strong>Test Your Riddle:</strong> Think like different AI models - some are better at certain types of puzzles</li>
+                <li><strong>Balance is Key:</strong> Too easy = all solve it. Too hard = none solve it. Aim for the middle!</li>
+              </ul>
+            </div>
+          </div>
         </div>
       </div>
     );

@@ -256,6 +256,10 @@ func main() {
 	mux.HandleFunc("/stats", handleGetStats)
 	mux.HandleFunc("/leaderboard", handleGetLeaderboard)
 
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "./static/index.html")
+	})
+
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
 
 	// Wrap the mux with the CORS middleware
