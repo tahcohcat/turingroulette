@@ -84,26 +84,27 @@ export default function TuringRoulette() {
           ...prev,
           [data.model]: data.content === 'true'
         }));
-      } else if (data.type === 'gameEnd') {
+      } else if (data.type === 'gameFinished') {
+        if (data.modelStates) {
+          setModelHistory(data.modelStates);
+        }
+        setGameResult({
+          playerWins: data.playerWins,
+          correctCount: data.correctCount,
+          totalModels: data.totalModels,
+          duration: data.duration,
+          score: data.score
+        });
         setGameMessage(data.message || '');
+        setGameState('finished');
+        fetchStats();
+        fetchLeaderboard();
       } else if (data.type === 'gameResult') {
         if (data.modelStates) {
           setModelHistory(data.modelStates);
         }
-        
-        if (data.gameOver) {
-          setGameResult({
-            playerWins: data.playerWins,
-            correctCount: data.correctCount,
-            totalModels: data.totalModels,
-            duration: data.duration,
-            score: data.score
-          });
-          setGameMessage(data.message || '');
-          setGameState('finished');
-          fetchStats();
-          fetchLeaderboard();
-        } else {
+
+        if (!data.gameOver) {
           setCurrentRound(data.nextRound);
           setTimeout(() => {
             const outputs = {};

@@ -37,23 +37,24 @@ type RiddleSubmission struct {
 }
 
 type GameState struct {
-	Riddle       string              `json:"riddle"`
-	Answer       string              `json:"answer"`
-	Clues        []string            `json:"clues"`
-	Difficulty   string              `json:"difficulty"`
-	CurrentRound int                 `json:"currentRound"`
+	Riddle       string                `json:"riddle"`
+	Answer       string                `json:"answer"`
+	Clues        []string              `json:"clues"`
+	Difficulty   string                `json:"difficulty"`
+	CurrentRound int                   `json:"currentRound"`
 	ModelStates  map[string]ModelState `json:"modelStates"`
-	StartTime    time.Time           `json:"startTime"`
+	StartTime    time.Time             `json:"startTime"`
 }
 
 type ModelState struct {
-	Correct      bool      `json:"correct"`
-	Guess        string    `json:"guess"`
-	Round        int       `json:"round"` // Which round they got it correct
-	AllGuesses   []string  `json:"allGuesses"` // History of all guesses
-	GuessResults []bool    `json:"guessResults"` // History of correct/incorrect for each guess
-	ResponseTime float64   `json:"responseTime"` // Response time in seconds
+	Correct       bool      `json:"correct"`
+	Guess         string    `json:"guess"`
+	Round         int       `json:"round"` // Which round they got it correct
+	AllGuesses    []string  `json:"allGuesses"` // History of all guesses
+	GuessResults  []bool    `json:"guessResults"` // History of correct/incorrect for each guess
+	ResponseTime  float64   `json:"responseTime"` // Response time in seconds
 	ResponseTimes []float64 `json:"responseTimes"` // History of response times for each round
+	GuessCount    int       `json:"guessCount"` // Track number of guesses made
 }
 
 type StreamMessage struct {
@@ -116,10 +117,10 @@ type OpenAIStreamResponse struct {
 
 // Anthropic structures
 type AnthropicRequest struct {
-	Model     string              `json:"model"`
-	Messages  []AnthropicMessage  `json:"messages"`
-	MaxTokens int                 `json:"max_tokens"`
-	Stream    bool                `json:"stream"`
+	Model     string             `json:"model"`
+	Messages  []AnthropicMessage `json:"messages"`
+	MaxTokens int                `json:"max_tokens"`
+	Stream    bool               `json:"stream"`
 }
 
 type AnthropicMessage struct {
@@ -170,9 +171,9 @@ type OllamaStreamResponse struct {
 
 // HuggingFace structures
 type HuggingFaceRequest struct {
-	Inputs     string                    `json:"inputs"`
-	Parameters HuggingFaceParameters     `json:"parameters"`
-	Options    HuggingFaceOptions        `json:"options"`
+	Inputs     string                 `json:"inputs"`
+	Parameters HuggingFaceParameters  `json:"parameters"`
+	Options    HuggingFaceOptions     `json:"options"`
 }
 
 type HuggingFaceParameters struct {
@@ -181,7 +182,7 @@ type HuggingFaceParameters struct {
 }
 
 type HuggingFaceOptions struct {
-	UseCache    bool `json:"use_cache"`
+	UseCache     bool `json:"use_cache"`
 	WaitForModel bool `json:"wait_for_model"`
 }
 
@@ -203,6 +204,8 @@ var statsMux sync.Mutex
 var leaderboard []LeaderboardEntry
 var leaderboardMux sync.Mutex
 
+const MAX_GUESSES = 3
+
 func main() {
 	loadConfig()
 	loadStats()
@@ -213,12 +216,11 @@ func main() {
 	mux.HandleFunc("/config", handleGetConfig)
 	mux.HandleFunc("/stats", handleGetStats)
 	mux.HandleFunc("/leaderboard", handleGetLeaderboard)
-	
+
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static"))))
 
 	// Wrap the mux with the CORS middleware
 	handler := corsMiddleware(mux)
-
 
 	log.Println("Server starting on :8080")
 	log.Fatal(http.ListenAndServe(":8080", handler))
@@ -335,14 +337,14 @@ func calculateScore(result GameResult) int {
 	}
 
 	baseScore := 100
-	
+
 	// Difficulty multiplier
 	difficultyMultiplier := map[string]float64{
 		"easy":   1.0,
 		"medium": 1.5,
 		"hard":   2.0,
 	}
-	
+
 	multiplier := difficultyMultiplier[result.Difficulty]
 	if multiplier == 0 {
 		multiplier = 1.0
@@ -429,7 +431,7 @@ func handleGetConfig(w http.ResponseWriter, r *http.Request) {
 func handleGetStats(w http.ResponseWriter, r *http.Request) {
 	statsMux.Lock()
 	defer statsMux.Unlock()
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
 }
@@ -437,7 +439,7 @@ func handleGetStats(w http.ResponseWriter, r *http.Request) {
 func handleGetLeaderboard(w http.ResponseWriter, r *http.Request) {
 	leaderboardMux.Lock()
 	defer leaderboardMux.Unlock()
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(leaderboard)
 }
@@ -461,7 +463,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		gamesMux.Lock()
 		modelStates := make(map[string]ModelState)
 		for _, model := range config.Models {
-			modelStates[model.Name] = ModelState{}
+			modelStates[model.Name] = ModelState{GuessCount: 0}
 		}
 
 		game := &GameState{
@@ -493,6 +495,7 @@ func playRound(conn *websocket.Conn, game *GameState) {
 
 	var wg sync.WaitGroup
 	for _, modelCfg := range config.Models {
+		// Skip models that are already correct
 		if game.ModelStates[modelCfg.Name].Correct {
 			continue
 		}
@@ -518,7 +521,6 @@ func playRound(conn *websocket.Conn, game *GameState) {
 	// Determine game outcome
 	totalModels := len(config.Models)
 	allCorrect := correctCount == totalModels
-	someCorrect := correctCount > 0 && correctCount < totalModels
 	cluesExhausted := game.CurrentRound >= len(game.Clues)
 
 	result := map[string]interface{}{
@@ -526,14 +528,15 @@ func playRound(conn *websocket.Conn, game *GameState) {
 		"correctCount":   correctCount,
 		"totalModels":    totalModels,
 		"allCorrect":     allCorrect,
-		"someCorrect":    someCorrect,
+		"someCorrect":    correctCount > 0 && correctCount < totalModels,
 		"cluesExhausted": cluesExhausted,
 		"modelStates":    game.ModelStates,
 	}
 
 	if allCorrect || cluesExhausted {
 		duration := time.Since(game.StartTime).Seconds()
-		
+		someCorrect := correctCount > 0 && correctCount < totalModels
+
 		gameResult := GameResult{
 			PlayerWins:   someCorrect && !allCorrect,
 			CorrectCount: correctCount,
@@ -547,21 +550,30 @@ func playRound(conn *websocket.Conn, game *GameState) {
 		updateStats(gameResult)
 		addToLeaderboard(game, gameResult)
 
-		result["gameOver"] = true
-		result["playerWins"] = gameResult.PlayerWins
-		result["duration"] = duration
-		result["score"] = calculateScore(gameResult)
+		// Send game finished message with all result data
+		finishedMsg := map[string]interface{}{
+			"type":         "gameFinished",
+			"playerWins":   gameResult.PlayerWins,
+			"correctCount": correctCount,
+			"totalModels":  totalModels,
+			"duration":     duration,
+			"score":        calculateScore(gameResult),
+			"modelStates":  game.ModelStates,
+		}
 
 		// Add result message
 		if gameResult.PlayerWins {
-			result["message"] = "You Win! Some AI guessed correctly, but not all."
+			finishedMsg["message"] = "🎉 You Win! Some AI guessed correctly, but not all."
 		} else {
 			if allCorrect {
-				result["message"] = "AI Wins! All AI guessed correctly."
+				finishedMsg["message"] = "🤖 AI Wins! All AI guessed correctly."
 			} else {
-				result["message"] = "AI Wins! No AI guessed correctly within the clues."
+				finishedMsg["message"] = "🤖 AI Wins! No AI guessed correctly within the clues."
 			}
 		}
+
+		conn.WriteJSON(finishedMsg)
+		return // End the game, don't continue
 	} else {
 		result["gameOver"] = false
 		game.CurrentRound++
@@ -570,17 +582,8 @@ func playRound(conn *websocket.Conn, game *GameState) {
 
 	conn.WriteJSON(result)
 
-	if !result["gameOver"].(bool) {
 	time.Sleep(2 * time.Second)
 	playRound(conn, game)
-	} else {
-		// Send game end message with result banner
-		endMsg := map[string]interface{}{
-			"type":    "gameEnd",
-			"message": result["message"],
-		}
-		conn.WriteJSON(endMsg)
-	}
 }
 
 func buildPrompt(game *GameState, modelName string) string {
@@ -631,32 +634,41 @@ func streamModelResponse(conn *websocket.Conn, modelCfg ModelConfig, prompt stri
 
 	responseTime := time.Since(startTime).Seconds()
 
+	// Trim and validate response
+	response = strings.TrimSpace(response)
+
 	var isCorrect bool
-	if err != nil {
+	if err != nil || response == "" {
 		log.Printf("Error streaming from %s: %v\n", modelCfg.Name, err)
-		response = ""
 		isCorrect = false
+		response = ""
 	} else {
 		isCorrect = checkAnswer(response, game.Answer)
 	}
-	
+
 	gamesMux.Lock()
 	state := game.ModelStates[modelCfg.Name]
 	state.Guess = response
-	state.Correct = isCorrect
+	state.GuessCount++
 	state.ResponseTime = responseTime
+
 	if isCorrect {
+		state.Correct = true
 		state.Round = game.CurrentRound + 1
 	}
-	// Add to history
-	state.AllGuesses = append(state.AllGuesses, response)
-	state.GuessResults = append(state.GuessResults, isCorrect)
-	state.ResponseTimes = append(state.ResponseTimes, responseTime)
+
+	// Add to history only if response is not empty
+	if response != "" {
+		state.AllGuesses = append(state.AllGuesses, response)
+		state.GuessResults = append(state.GuessResults, isCorrect)
+		state.ResponseTimes = append(state.ResponseTimes, responseTime)
+	}
+
 	game.ModelStates[modelCfg.Name] = state
 	gamesMux.Unlock()
 
 	// Only send result if no error (successful response)
-	if err == nil {
+	if err == nil && response != "" {
 		resultMsg := StreamMessage{
 			Model:   modelCfg.Name,
 			Content: fmt.Sprintf("%v", isCorrect),
@@ -694,13 +706,13 @@ func streamOpenAI(ctx context.Context, conn *websocket.Conn, cfg ModelConfig, pr
 
 	var fullResponse strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
-	
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
-		
+
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
 			break
@@ -714,7 +726,7 @@ func streamOpenAI(ctx context.Context, conn *websocket.Conn, cfg ModelConfig, pr
 		if len(streamResp.Choices) > 0 {
 			content := streamResp.Choices[0].Delta.Content
 			fullResponse.WriteString(content)
-			
+
 			msg := StreamMessage{
 				Model:   cfg.Name,
 				Content: content,
@@ -757,15 +769,15 @@ func streamAnthropic(ctx context.Context, conn *websocket.Conn, cfg ModelConfig,
 
 	var fullResponse strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
-	
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
-		
+
 		data := strings.TrimPrefix(line, "data: ")
-		
+
 		var streamResp AnthropicStreamResponse
 		if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
 			continue
@@ -774,7 +786,7 @@ func streamAnthropic(ctx context.Context, conn *websocket.Conn, cfg ModelConfig,
 		if streamResp.Type == "content_block_delta" && streamResp.Delta.Type == "text_delta" {
 			content := streamResp.Delta.Text
 			fullResponse.WriteString(content)
-			
+
 			msg := StreamMessage{
 				Model:   cfg.Name,
 				Content: content,
@@ -801,7 +813,7 @@ func streamGoogle(ctx context.Context, conn *websocket.Conn, cfg ModelConfig, pr
 
 	body, _ := json.Marshal(reqBody)
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1/models/%s:generateContent?key=%s", cfg.Model, cfg.APIKey)
-	
+
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return "", err
@@ -823,7 +835,7 @@ func streamGoogle(ctx context.Context, conn *websocket.Conn, cfg ModelConfig, pr
 
 	if len(geminiResp.Candidates) > 0 && len(geminiResp.Candidates[0].Content.Parts) > 0 {
 		content := geminiResp.Candidates[0].Content.Parts[0].Text
-		
+
 		for _, char := range content {
 			msg := StreamMessage{
 				Model:   cfg.Name,
@@ -834,7 +846,7 @@ func streamGoogle(ctx context.Context, conn *websocket.Conn, cfg ModelConfig, pr
 			conn.WriteJSON(msg)
 			time.Sleep(20 * time.Millisecond)
 		}
-		
+
 		return content, nil
 	}
 
@@ -870,7 +882,7 @@ func streamOllama(ctx context.Context, conn *websocket.Conn, cfg ModelConfig, pr
 
 	var fullResponse strings.Builder
 	decoder := json.NewDecoder(resp.Body)
-	
+
 	for {
 		var streamResp OllamaStreamResponse
 		if err := decoder.Decode(&streamResp); err != nil {
@@ -881,7 +893,7 @@ func streamOllama(ctx context.Context, conn *websocket.Conn, cfg ModelConfig, pr
 		}
 
 		fullResponse.WriteString(streamResp.Response)
-		
+
 		msg := StreamMessage{
 			Model:   cfg.Name,
 			Content: streamResp.Response,
@@ -939,11 +951,11 @@ func streamHuggingFace(ctx context.Context, conn *websocket.Conn, cfg ModelConfi
 
 	if len(hfResp) > 0 {
 		content := hfResp[0].GeneratedText
-		
+
 		// Remove the prompt from the response if it's included
 		content = strings.TrimPrefix(content, prompt)
 		content = strings.TrimSpace(content)
-		
+
 		// Simulate streaming
 		for _, char := range content {
 			msg := StreamMessage{
@@ -955,7 +967,7 @@ func streamHuggingFace(ctx context.Context, conn *websocket.Conn, cfg ModelConfi
 			conn.WriteJSON(msg)
 			time.Sleep(20 * time.Millisecond)
 		}
-		
+
 		return content, nil
 	}
 
@@ -965,7 +977,7 @@ func streamHuggingFace(ctx context.Context, conn *websocket.Conn, cfg ModelConfi
 func checkAnswer(guess string, correctAnswer string) bool {
 	guess = strings.TrimSpace(strings.ToLower(guess))
 	answer := strings.TrimSpace(strings.ToLower(correctAnswer))
-	
+
 	guess = strings.TrimPrefix(guess, "the answer is ")
 	guess = strings.TrimPrefix(guess, "i believe the answer is ")
 	guess = strings.TrimPrefix(guess, "based on the clues, it's ")
@@ -974,6 +986,6 @@ func checkAnswer(guess string, correctAnswer string) bool {
 	guess = strings.TrimPrefix(guess, "an ")
 	guess = strings.TrimSuffix(guess, "?")
 	guess = strings.TrimSuffix(guess, ".")
-	
+
 	return strings.Contains(guess, answer) || strings.Contains(answer, guess) || guess == answer
 }
