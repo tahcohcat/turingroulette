@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -34,16 +35,19 @@ type RiddleSubmission struct {
 	Answer     string   `json:"answer"`
 	Clues      []string `json:"clues"`
 	Difficulty string   `json:"difficulty"` // "easy", "medium", "hard"
+	Username   string   `json:"username"`
 }
 
 type GameState struct {
-	Riddle       string                `json:"riddle"`
-	Answer       string                `json:"answer"`
-	Clues        []string              `json:"clues"`
-	Difficulty   string                `json:"difficulty"`
-	CurrentRound int                   `json:"currentRound"`
-	ModelStates  map[string]ModelState `json:"modelStates"`
-	StartTime    time.Time             `json:"startTime"`
+	Riddle         string                `json:"riddle"`
+	Answer         string                `json:"answer"`
+	Clues          []string              `json:"clues"`
+	Difficulty     string                `json:"difficulty"`
+	CurrentRound   int                   `json:"currentRound"`
+	ModelStates    map[string]ModelState `json:"modelStates"`
+	StartTime      time.Time             `json:"startTime"`
+	Username       string                `json:"username"`
+	SelectedModels []ModelConfig         `json:"selectedModels"`
 }
 
 type ModelState struct {
@@ -72,6 +76,7 @@ type GameResult struct {
 	Duration     float64   `json:"duration"` // seconds
 	RoundsPlayed int       `json:"roundsPlayed"`
 	Timestamp    time.Time `json:"timestamp"`
+	Username     string    `json:"username"`
 }
 
 type Stats struct {
@@ -85,14 +90,24 @@ type Stats struct {
 }
 
 type LeaderboardEntry struct {
-	Riddle       string    `json:"riddle"`
-	Difficulty   string    `json:"difficulty"`
-	PlayerWon    bool      `json:"playerWon"`
-	CorrectCount int       `json:"correctCount"`
-	TotalModels  int       `json:"totalModels"`
-	Duration     float64   `json:"duration"`
-	Timestamp    time.Time `json:"timestamp"`
-	Score        int       `json:"score"` // Calculated score
+	Riddle       string                    `json:"riddle"`
+	Difficulty   string                    `json:"difficulty"`
+	Username     string                    `json:"username"`
+	PlayerWon    bool                      `json:"playerWon"`
+	CorrectCount int                       `json:"correctCount"`
+	TotalModels  int                       `json:"totalModels"`
+	Duration     float64                   `json:"duration"`
+	Timestamp    time.Time                 `json:"timestamp"`
+	Score        int                       `json:"score"` // Calculated score
+	Models       []LeaderboardModelEntry   `json:"models"`
+}
+
+type LeaderboardModelEntry struct {
+	Name          string  `json:"name"`
+	Provider      string  `json:"provider"`
+	Correct       bool    `json:"correct"`
+	ResponseTime  float64 `json:"responseTime"`
+	FinalGuess    string  `json:"finalGuess"`
 }
 
 // OpenAI structures
@@ -306,9 +321,6 @@ func loadStats() {
 }
 
 func saveStats() {
-	statsMux.Lock()
-	defer statsMux.Unlock()
-
 	data, _ := json.MarshalIndent(stats, "", "  ")
 	os.WriteFile("stats.json", data, 0644)
 }
@@ -324,9 +336,6 @@ func loadLeaderboard() {
 }
 
 func saveLeaderboard() {
-	leaderboardMux.Lock()
-	defer leaderboardMux.Unlock()
-
 	data, _ := json.MarshalIndent(leaderboard, "", "  ")
 	os.WriteFile("leaderboard.json", data, 0644)
 }
@@ -364,6 +373,8 @@ func calculateScore(result GameResult) int {
 }
 
 func updateStats(result GameResult) {
+
+	log.Println("Updating stats with result:", result)	
 	statsMux.Lock()
 	defer statsMux.Unlock()
 
@@ -386,19 +397,47 @@ func updateStats(result GameResult) {
 	stats.TotalDuration += result.Duration
 	stats.AverageDuration = stats.TotalDuration / float64(stats.TotalGames)
 
+	log.Println("Saving stats")
 	saveStats()
 }
 
 func addToLeaderboard(game *GameState, result GameResult) {
+	// Build model details for leaderboard
+	var models []LeaderboardModelEntry
+	for _, modelCfg := range game.SelectedModels {
+		if state, exists := game.ModelStates[modelCfg.Name]; exists {
+			// Get the final guess (last non-empty guess)
+			finalGuess := ""
+			if len(state.AllGuesses) > 0 {
+				for i := len(state.AllGuesses) - 1; i >= 0; i-- {
+					if state.AllGuesses[i] != "" {
+						finalGuess = state.AllGuesses[i]
+						break
+					}
+				}
+			}
+
+			models = append(models, LeaderboardModelEntry{
+				Name:         modelCfg.Name,
+				Provider:     modelCfg.Provider,
+				Correct:      state.Correct,
+				ResponseTime: state.ResponseTime,
+				FinalGuess:   finalGuess,
+			})
+		}
+	}
+
 	entry := LeaderboardEntry{
 		Riddle:       game.Riddle,
 		Difficulty:   game.Difficulty,
+		Username:     game.Username,
 		PlayerWon:    result.PlayerWins,
 		CorrectCount: result.CorrectCount,
 		TotalModels:  result.TotalModels,
 		Duration:     result.Duration,
 		Timestamp:    result.Timestamp,
 		Score:        calculateScore(result),
+		Models:       models,
 	}
 
 	leaderboardMux.Lock()
@@ -461,8 +500,21 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		gamesMux.Lock()
+
+		// Randomly select 3 models from config (or all if fewer than 3)
+		selectedModels := config.Models
+		if len(config.Models) > 3 {
+			// Shuffle the models and take first 3
+			shuffled := make([]ModelConfig, len(config.Models))
+			copy(shuffled, config.Models)
+			rand.Shuffle(len(shuffled), func(i, j int) {
+				shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
+			})
+			selectedModels = shuffled[:3]
+		}
+
 		modelStates := make(map[string]ModelState)
-		for _, model := range config.Models {
+		for _, model := range selectedModels {
 			modelStates[model.Name] = ModelState{GuessCount: 0}
 		}
 
@@ -474,6 +526,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			CurrentRound: 0,
 			ModelStates:  modelStates,
 			StartTime:    time.Now(),
+			Username:     submission.Username,
+			SelectedModels: selectedModels,
 		}
 		games[conn] = game
 		gamesMux.Unlock()
@@ -486,6 +540,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	gamesMux.Unlock()
 }
 
+// Add this debugging code to cmd/server/main.go in the playRound function
+// Right after checking results, add:
+
 func playRound(conn *websocket.Conn, game *GameState) {
 	// Send round start message
 	conn.WriteJSON(map[string]interface{}{
@@ -494,7 +551,7 @@ func playRound(conn *websocket.Conn, game *GameState) {
 	})
 
 	var wg sync.WaitGroup
-	for _, modelCfg := range config.Models {
+	for _, modelCfg := range game.SelectedModels {
 		// Skip models that are already correct
 		if game.ModelStates[modelCfg.Name].Correct {
 			continue
@@ -512,43 +569,61 @@ func playRound(conn *websocket.Conn, game *GameState) {
 
 	// Check results
 	correctCount := 0
-	for _, state := range game.ModelStates {
+	for m, state := range game.ModelStates {
 		if state.Correct {
+			log.Printf("Model %s guessed correctly: %v\n", m, state.Guess)
 			correctCount++
 		}
 	}
 
-	// Determine game outcome
-	totalModels := len(config.Models)
+	totalModels := len(game.SelectedModels)
 	allCorrect := correctCount == totalModels
+	someCorrect := correctCount > 0 && correctCount < totalModels
+	noneCorrect := correctCount == 0
 	cluesExhausted := game.CurrentRound >= len(game.Clues)
+
+	// ADD DEBUGGING HERE
+	log.Printf("=== ROUND %d DEBUG ===\n", game.CurrentRound)
+	log.Printf("Total Models: %d\n", totalModels)
+	log.Printf("Correct Count: %d\n", correctCount)
+	log.Printf("All Correct: %v\n", allCorrect)
+	log.Printf("Some Correct: %v\n", someCorrect)
+	log.Printf("None Correct: %v\n", noneCorrect)
+	log.Printf("Clues Exhausted: %v (Round %d, Clues %d)\n", cluesExhausted, game.CurrentRound, len(game.Clues))
+	log.Printf("Model States:\n")
+	for name, state := range game.ModelStates {
+		log.Printf("  %s: Correct=%v, Round=%d, Guess=%s\n", name, state.Correct, state.Round, state.Guess)
+	}
+	log.Printf("==================\n")
 
 	result := map[string]interface{}{
 		"type":           "gameResult",
 		"correctCount":   correctCount,
 		"totalModels":    totalModels,
 		"allCorrect":     allCorrect,
-		"someCorrect":    correctCount > 0 && correctCount < totalModels,
+		"someCorrect":    someCorrect,
 		"cluesExhausted": cluesExhausted,
 		"modelStates":    game.ModelStates,
 	}
 
-	if allCorrect || cluesExhausted {
+	// Game ends if all correct, OR some correct (player wins), OR clues exhausted
+	if allCorrect || someCorrect || cluesExhausted {
+		log.Printf("GAME ENDING: allCorrect=%v, someCorrect=%v, cluesExhausted=%v", allCorrect, someCorrect, cluesExhausted)
 		duration := time.Since(game.StartTime).Seconds()
-		someCorrect := correctCount > 0 && correctCount < totalModels
 
 		gameResult := GameResult{
-			PlayerWins:   someCorrect && !allCorrect,
+			PlayerWins:   someCorrect && !allCorrect, // Win only if some correct but not all
 			CorrectCount: correctCount,
 			TotalModels:  totalModels,
 			Difficulty:   game.Difficulty,
 			Duration:     duration,
 			RoundsPlayed: game.CurrentRound + 1,
 			Timestamp:    time.Now(),
+			Username:     game.Username,
 		}
 
-		updateStats(gameResult)
-		addToLeaderboard(game, gameResult)
+		log.Printf("GAME FINISHED - Player Wins: %v\n", gameResult.PlayerWins)
+
 
 		// Send game finished message with all result data
 		finishedMsg := map[string]interface{}{
@@ -572,7 +647,21 @@ func playRound(conn *websocket.Conn, game *GameState) {
 			}
 		}
 
+		log.Println("Sending gameFinished message")
+		// Small delay so users can see the final results
+		time.Sleep(2 * time.Second)
 		conn.WriteJSON(finishedMsg)
+		
+		log.Println("Updating stats and leaderboard")
+		updateStats(gameResult)
+		addToLeaderboard(game, gameResult)
+
+		result["gameOver"] = true
+		log.Print("Stats and leaderboard updated")
+
+		// Pause before ending
+		time.Sleep(1500 * time.Millisecond)
+
 		return // End the game, don't continue
 	} else {
 		result["gameOver"] = false
@@ -582,7 +671,7 @@ func playRound(conn *websocket.Conn, game *GameState) {
 
 	conn.WriteJSON(result)
 
-	time.Sleep(2 * time.Second)
+	time.Sleep(1500 * time.Millisecond)
 	playRound(conn, game)
 }
 
