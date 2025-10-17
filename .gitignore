@@ -36,6 +36,7 @@ go.work.sum
 
 # Config with secrets
 config.json
+data/
 
 # Editor/IDE
 # .idea/

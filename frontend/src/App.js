@@ -636,12 +636,13 @@ export default function TuringRoulette() {
                   <div className="overflow-x-auto">
                     <table className="w-full">
                       <thead>
-                        <tr className="border-b border-gray-700">
-                          <th className="text-left p-3 text-gray-400 font-semibold">Model</th>
-                          <th className="text-left p-3 text-gray-400 font-semibold">Provider</th>
-                          <th className="text-left p-3 text-gray-400 font-semibold">Games</th>
-                          <th className="text-left p-3 text-gray-400 font-semibold">Accuracy</th>
-                          <th className="text-left p-3 text-gray-400 font-semibold">Avg Time</th>
+                      <tr className="border-b border-gray-700">
+                      <th className="text-left p-3 text-gray-400 font-semibold">Model</th>
+                      <th className="text-left p-3 text-gray-400 font-semibold">Provider</th>
+                      <th className="text-left p-3 text-gray-400 font-semibold">Games</th>
+                      <th className="text-left p-3 text-gray-400 font-semibold">Accuracy</th>
+                      <th className="text-left p-3 text-gray-400 font-semibold">Avg Time</th>
+                        <th className="text-left p-3 text-gray-400 font-semibold">Avg Guesses</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -649,19 +650,20 @@ export default function TuringRoulette() {
                           .sort((a, b) => b.gamesPlayed - a.gamesPlayed)
                           .map((model) => (
                           <tr key={model.name} className="border-b border-gray-800">
-                            <td className="p-3 text-white font-medium">{model.name}</td>
-                            <td className="p-3 text-gray-400 capitalize">{model.provider}</td>
-                            <td className="p-3 text-white">{model.gamesPlayed}</td>
-                            <td className="p-3">
-                              <span className={`px-2 py-1 rounded text-xs font-bold ${
-                                model.accuracy >= 80 ? 'bg-green-600 text-white' :
-                                model.accuracy >= 60 ? 'bg-yellow-600 text-white' :
-                                'bg-red-600 text-white'
-                              }`}>
-                                {model.accuracy?.toFixed(1)}%
-                              </span>
-                            </td>
-                            <td className="p-3 text-gray-300">{model.avgResponseTime?.toFixed(2)}s</td>
+                          <td className="p-3 text-white font-medium">{model.name}</td>
+                          <td className="p-3 text-gray-400 capitalize">{model.provider}</td>
+                          <td className="p-3 text-white">{model.gamesPlayed}</td>
+                          <td className="p-3">
+                          <span className={`px-2 py-1 rounded text-xs font-bold ${
+                          model.accuracy >= 80 ? 'bg-green-600 text-white' :
+                          model.accuracy >= 60 ? 'bg-yellow-600 text-white' :
+                          'bg-red-600 text-white'
+                          }`}>
+                          {model.accuracy?.toFixed(1)}%
+                          </span>
+                          </td>
+                          <td className="p-3 text-gray-300">{model.avgResponseTime?.toFixed(2)}s</td>
+                            <td className="p-3 text-gray-300">{model.avgGuessesToCorrect?.toFixed(1) || 'N/A'}</td>
                           </tr>
                         ))}
                       </tbody>

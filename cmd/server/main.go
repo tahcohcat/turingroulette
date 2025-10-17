@@ -59,6 +59,7 @@ type ModelState struct {
 	ResponseTime  float64   `json:"responseTime"` // Response time in seconds
 	ResponseTimes []float64 `json:"responseTimes"` // History of response times for each round
 	GuessCount    int       `json:"guessCount"` // Track number of guesses made
+	GuessesToCorrect int    `json:"guessesToCorrect"` // How many guesses needed to get correct
 }
 
 type StreamMessage struct {
@@ -98,6 +99,8 @@ type ModelStats struct {
 	Accuracy        float64 `json:"accuracy"`
 	AvgResponseTime float64 `json:"avgResponseTime"`
 	TotalResponseTime float64 `json:"totalResponseTime"`
+	AvgGuessesToCorrect float64 `json:"avgGuessesToCorrect"`
+	TotalGuessesToCorrect int   `json:"totalGuessesToCorrect"`
 }
 
 type LeaderboardEntry struct {
@@ -232,7 +235,17 @@ var leaderboardMux sync.Mutex
 
 const MAX_GUESSES = 3
 
+var dataDir string
+
+func init() {
+	dataDir = os.Getenv("DATA_DIR")
+	if dataDir == "" {
+		dataDir = "./data/"
+	}
+}
+
 func main() {
+	os.MkdirAll(dataDir, 0755)
 	loadConfig()
 	loadStats()
 	loadLeaderboard()
@@ -271,7 +284,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func loadConfig() {
-	file, err := os.ReadFile("config.json")
+	file, err := os.ReadFile(dataDir + "config.json")
 	if err != nil {
 		log.Println("No config.json found, using default configuration")
 		config = Config{
@@ -320,7 +333,7 @@ func loadConfig() {
 }
 
 func loadStats() {
-	file, err := os.ReadFile("stats.json")
+	file, err := os.ReadFile(dataDir + "stats.json")
 	if err != nil {
 		stats = Stats{
 			ByDifficulty: make(map[string]int),
@@ -337,11 +350,11 @@ func loadStats() {
 
 func saveStats() {
 	data, _ := json.MarshalIndent(stats, "", "  ")
-	os.WriteFile("stats.json", data, 0644)
+	os.WriteFile(dataDir + "stats.json", data, 0644)
 }
 
 func loadLeaderboard() {
-	file, err := os.ReadFile("leaderboard.json")
+	file, err := os.ReadFile(dataDir + "leaderboard.json")
 	if err != nil {
 		leaderboard = []LeaderboardEntry{}
 		return
@@ -352,7 +365,7 @@ func loadLeaderboard() {
 
 func saveLeaderboard() {
 	data, _ := json.MarshalIndent(leaderboard, "", "  ")
-	os.WriteFile("leaderboard.json", data, 0644)
+	os.WriteFile(dataDir + "leaderboard.json", data, 0644)
 }
 
 func calculateScore(result GameResult) int {
@@ -440,12 +453,16 @@ func updateModelStats(game *GameState) {
 			modelStat.GamesPlayed++
 			if state.Correct {
 				modelStat.TimesCorrect++
+				modelStat.TotalGuessesToCorrect += state.GuessesToCorrect
 			}
 			modelStat.TotalResponseTime += state.ResponseTime
 
 			if modelStat.GamesPlayed > 0 {
 				modelStat.Accuracy = float64(modelStat.TimesCorrect) / float64(modelStat.GamesPlayed) * 100
 				modelStat.AvgResponseTime = modelStat.TotalResponseTime / float64(modelStat.GamesPlayed)
+			}
+			if modelStat.TimesCorrect > 0 {
+				modelStat.AvgGuessesToCorrect = float64(modelStat.TotalGuessesToCorrect) / float64(modelStat.TimesCorrect)
 			}
 
 			stats.ByModel[modelKey] = modelStat
@@ -667,13 +684,13 @@ func playRound(conn *websocket.Conn, game *GameState) {
 		"modelStates":    game.ModelStates,
 	}
 
-	// Game ends if all correct, OR some correct (player wins), OR clues exhausted
-	if allCorrect || someCorrect || cluesExhausted {
+	// Game ends if all models correct OR all clues exhausted
+	if allCorrect || cluesExhausted {
 		log.Printf("GAME ENDING: allCorrect=%v, someCorrect=%v, cluesExhausted=%v", allCorrect, someCorrect, cluesExhausted)
 		duration := time.Since(game.StartTime).Seconds()
 
 		gameResult := GameResult{
-			PlayerWins:   someCorrect && !allCorrect, // Win only if some correct but not all
+			PlayerWins:   correctCount > 0 && correctCount < totalModels, // Win if some (but not all) models got correct
 			CorrectCount: correctCount,
 			TotalModels:  totalModels,
 			Difficulty:   game.Difficulty,
@@ -803,9 +820,10 @@ func streamModelResponse(conn *websocket.Conn, modelCfg ModelConfig, prompt stri
 	state.GuessCount++
 	state.ResponseTime = responseTime
 
-	if isCorrect {
+	if isCorrect && !state.Correct {
 		state.Correct = true
 		state.Round = game.CurrentRound + 1
+		state.GuessesToCorrect = state.GuessCount
 	}
 
 	// Add to history only if response is not empty
